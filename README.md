@@ -1,2 +1,2 @@
 # BenchHub-analysis
-This Github provides the code for all experimentas in the munuscript. 
+This github provides the code for all experiments in the manuscript. 
