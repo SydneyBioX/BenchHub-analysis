@@ -1,0 +1,390 @@
+---
+title: "BenchHub Case Study: Spatial domain detection"
+date: "`r BiocStyle::doc_date()`"
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{BenchHub Case Study: Spatial domain detection}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning=FALSE
+)
+```
+
+```{r, message=FALSE, warning=FALSE}
+devtools::load_all()
+library(BenchHub)
+library(FNN)
+library(igraph)
+library(Matrix)
+library(SingleCellExperiment)
+library(readr)
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+Sys.setenv(GITHUB_PAT = "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")
+```
+
+
+```{r}
+tempCache <- tempdir()
+ARI <- function(auxData, predicted) {
+  result <- mclust::adjustedRandIndex(auxData, predicted)
+  return(result)
+}
+
+NMI <- function(auxData, predicted) {
+  result <- aricode::NMI(auxData, predicted)
+  return(result)
+}
+
+PAS <- function(auxData, predicted) {
+  # browser() 
+  k <- 10        
+  threshold <- 6 
+  nn_result <- get.knn(predicted, k = k)
+  abnormal_count <- sum(sapply(1:nrow(predicted), function(i) {
+    neighbor_labels <- auxData[nn_result$nn.index[i, ]]
+    sum(neighbor_labels != auxData[i]) >= threshold
+  }))
+  return(abnormal_count / nrow(predicted))
+}
+
+CHAOS <- function(auxData, predicted) {
+  cluster_ids <- unique(auxData)
+  cluster_ids <- cluster_ids[!is.na(cluster_ids)] 
+  
+  chaos_scores <- sapply(cluster_ids, function(cluster) {
+    indices <- which(auxData == cluster)
+    coords <- predicted[indices, , drop = FALSE]
+    
+    if (nrow(coords) <= 1) return(0) 
+    
+    dist_mat <- as.matrix(dist(coords))
+    
+    g <- graph_from_adjacency_matrix(dist_mat, mode = "undirected", weighted = TRUE)
+    mst <- mst(g)
+    mst_sum <- sum(E(mst)$weight)
+    normalized_mst <- mst_sum / nrow(coords)
+    return(normalized_mst)
+  })
+  
+  return(mean(chaos_scores))
+}
+
+data <- readRDS("~/Downloads/STARmap.rds")
+
+# Mouse Primary cortex under BaristaSeq Protocol
+# Human Postmortem DLPFC under 10x Visium Protocol
+
+# Mouse Preoptic hypothalamus under MERFISH Protocol
+# Human Pancreatic ductal adenocarcinomas under ST Protocol
+# Mouse Medial prefrontal cortex under STARmap Protocol
+
+
+# Mouse embryo under seqFISH Protocol
+
+
+
+
+trio <- BenchHub::Trio$new(data = data, cachePath = tempCache)
+
+trio$addMetric("ARI", ARI)
+trio$addMetric("NMI", NMI)
+trio$addMetric("PAS", PAS)
+trio$addMetric("CHAOS", CHAOS)
+
+trio$addEvidence(
+   name = "Accuracy", 
+   evidence = setNames(colData(trio$data)$manual_anno,
+                       colnames(trio$data)), 
+   metrics = c("ARI", "NMI")
+)
+
+trio$addEvidence(
+  name = "Continuity", evidence = as.matrix(colData(trio$data)[, c("row", "col")]), metrics = c("PAS", "CHAOS")
+)
+
+# trio$addEvidence(
+#   name = "scalability", evidence = NA, metrics = c("time",  # "memory")
+# )
+
+BenchHub:::createGist("\\(x) NULL", 'test.R', 'test')
+
+trio$writeCTD("MMPstarmap")
+
+
+
+```
+
+
+
+# Prepare metric
+
+```{r, eval=FALSE}
+tempCache <- tempdir()
+ARI <- function(auxData, predicted) {
+  result <- mclust::adjustedRandIndex(auxData, predicted)
+  return(result)
+}
+
+NMI <- function(auxData, predicted) {
+  result <- aricode::NMI(auxData, predicted)
+  return(result)
+}
+
+PAS <- function(auxData, predicted) {
+  # browser() 
+  k <- 10        
+  threshold <- 6 
+  nn_result <- get.knn(predicted, k = k)
+  abnormal_count <- sum(sapply(1:nrow(predicted), function(i) {
+    neighbor_labels <- auxData[nn_result$nn.index[i, ]]
+    sum(neighbor_labels != auxData[i]) >= threshold
+  }))
+  return(abnormal_count / nrow(predicted))
+}
+
+CHAOS <- function(auxData, predicted) {
+  cluster_ids <- unique(auxData)
+  cluster_ids <- cluster_ids[!is.na(cluster_ids)] 
+  
+  chaos_scores <- sapply(cluster_ids, function(cluster) {
+    indices <- which(auxData == cluster)
+    coords <- predicted[indices, , drop = FALSE]
+    
+    if (nrow(coords) <= 1) return(0) 
+    
+    dist_mat <- as.matrix(dist(coords))
+    
+    g <- graph_from_adjacency_matrix(dist_mat, mode = "undirected", weighted = TRUE)
+    mst <- mst(g)
+    mst_sum <- sum(E(mst)$weight)
+    normalized_mst <- mst_sum / nrow(coords)
+    return(normalized_mst)
+  })
+  
+  return(mean(chaos_scores))
+}
+
+
+
+```
+
+# Set up and save trio
+
+```{r, eval=FALSE}
+output_dir <- "/Users/cabiria/Desktop/manuscript/TrioR/vignettes/trio_objects"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+datasets <- list(
+  MOB = list(file = "~/Downloads/result/MOB.csv", id = "figshare:29142950/54794756"),
+  PDAC = list(file = "~/Downloads/result/PDAC.csv", id = "figshare:29142950/54794762"),
+  MGASTRULA = list(file = "~/Downloads/result/MGASTRULA.csv", id = "figshare:29142950/54794759"),
+  STARmap = list(file = "~/Downloads/result/STARmap.csv", id = "figshare:29142950/54794771"),
+  SMI = list(file = "~/Downloads/result/SMI.csv", id = "figshare:29142950/54794768"),
+  seqfish = list(file = "~/Downloads/result/seqfish.csv", id = "figshare:29142950/54794765"),
+  baristaSeq = list(file = "~/Downloads/result/baristaSeq.csv", id = "figshare:29142950/54794750") ,
+  LIBD = list(file = "~/Downloads/result/LIBD.csv", id = "figshare:29142950/54794753"),
+  MERFISH = list(file = "~/Downloads/result/MOB.csv", id = "figshare:29142950/54794747")
+)
+
+# Loop over datasets
+for (name in names(datasets)) {
+  # Load CSV and ID
+  
+  name <- "MOB"
+  
+  df <- read_csv(datasets[[name]]$file)
+  df <- df[complete.cases(df), ]
+  figshare_id <- datasets[[name]]$id
+  
+  # Create new Trio object
+  trio <- Trio$new(figshare_id, cachePath = tempCache)
+  
+  # Add metrics
+  trio$addMetric("ARI", ARI)
+  trio$addMetric("NMI", NMI)
+  trio$addMetric("PAS", PAS)
+  trio$addMetric("CHAOS", CHAOS)
+  
+  # Add auxiliary data
+  trio$addEvidence(
+    name = "Accuracy", evidence = df$ground_truth, metrics = c("ARI", "NMI")
+  )
+  trio$addEvidence(
+    name = "Continuity", evidence = as.matrix(df[, c("row", "col")]), metrics = c("PAS", "CHAOS")
+  )
+  
+  saveRDS(trio, file = file.path(output_dir, paste0(name, "_trio_test.rds")))
+  
+}
+```
+
+```{r}
+googlesheets4::gs4_auth()
+trio$writeCTD(name = "MOBTEST")
+```
+
+
+
+
+# Load the trio and get evaluation result
+
+```{r}
+datasets <- list(
+  MOB = list(file = "~/Downloads/result/MOB.csv", trio = "trio_objects/MOB_trio.rds"),
+  PDAC = list(file = "~/Downloads/result/PDAC.csv", trio = "trio_objects/PDAC_trio.rds"),
+  MGASTRULA = list(file = "~/Downloads/result/MGASTRULA.csv", trio = "trio_objects/MGASTRULA_trio.rds"),
+  STARmap = list(file = "~/Downloads/result/STARmap.csv", trio = "trio_objects/STARmap_trio.rds"),
+  # SMI = list(file = "~/Downloads/result/SMI.csv", trio = "~/trio_objects/SMI_trio.rds"),
+  # seqfish = list(file = "~/Downloads/result/seqfish.csv", trio = "trio_objects/seqfish_trio.rds"),
+  baristaSeq = list(file = "~/Downloads/result/baristaSeq.csv", trio = "trio_objects/baristaSeq_trio.rds"),
+  LIBD = list(file = "~/Downloads/result/LIBD.csv", trio = "trio_objects/LIBD_trio.rds"),
+  MERFISH = list(file = "~/Downloads/result/MOB.csv", trio = "trio_objects/MERFISH_trio.rds")
+)
+
+# Initialize final result
+final_result <- NULL
+
+# Methods to evaluate
+methods <- c("BASS", "SpatialPCA", "leiden", "BayesSpace", "PRECAST", "DESC")
+
+
+# Loop through datasets
+for (name in names(datasets)) {
+  cat("Evaluating:", name, "\n")
+
+  # Load prediction data
+  df <- read_csv(datasets[[name]]$file)
+  df <- df[complete.cases(df), ]
+
+  # Load the pre-saved Trio object
+  trio <- readRDS(datasets[[name]]$trio)
+
+  # Create evaluation input
+   result <- trio$evaluate(list(
+    BASS = list("Accuracy" = df$spatial_cluster_BASS) ,
+    SpatialPCA = list("Accuracy" = df$spatial_cluster_SpatialPCA),
+    leiden = list("Accuracy" = df$spatial_cluster_leiden),
+    BayesSpace = list("Accuracy" = df$spatial_cluster_BayesSpace),
+    PRECAST = list("Accuracy" = df$spatial_cluster_PRECAST),
+    DESC = list("Accuracy" = df$spatial_cluster_DESC),
+  
+    BASS = list("Continuity" = df$spatial_cluster_BASS),
+    SpatialPCA = list("Continuity" = df$spatial_cluster_SpatialPCA),
+    leiden = list("Continuity" = df$spatial_cluster_leiden),
+    BayesSpace = list("Continuity" = df$spatial_cluster_BayesSpace),
+    PRECAST = list("Continuity" = df$spatial_cluster_PRECAST),
+    DESC = list("Continuity" = df$spatial_cluster_DESC)
+  ))
+
+  # Append to final result
+  final_result <- bind_rows(final_result, result)
+}
+
+
+# insert scability
+scability <- read_csv("~/Downloads/benchmark_results.csv")
+
+scability_long <- scability %>%
+  pivot_longer(cols = c(time, memory), names_to = "metric", values_to = "result") %>%
+  mutate(
+    datasetID = "29142950/54794753",
+    auxData = case_when(
+      dataset == "LIBD_fixSpot_1k_gene1k" ~ 10,
+      dataset == "LIBD_fixSpot_1k_gene5k" ~ 50,
+      dataset == "LIBD_fixGene_2k_spot1k" ~ 20,
+      dataset == "LIBD_fixGene_2k_spot3k" ~ 60,
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  dplyr::select(datasetID, method, auxData, metric, result)
+
+final_result <- rbind(final_result, scability_long)
+
+knitr::kable(head(final_result, 10))
+```
+
+# Set up benchamrkInsight
+
+```{r}
+bmi <- benchmarkInsights$new(final_result)
+bmi
+```
+
+# Get insight from case study
+
+**Case Study: What is the overview of summary?**
+
+```{r}
+bmi$getHeatmap(bmi$evalSummary)
+```
+
+**Case Study: What is the correlation between auxData/metric/method?**
+
+```{r}
+p1 <- bmi$getCorplot(bmi$evalSummary, "method") + scale_fill_gradient2(
+    low = "blue",       # for negative correlation
+    mid = "white",      # for zero correlation
+    high = "#B1886A",   # for positive correlation
+    midpoint = 0,
+    limits = c(0, 1),
+    name = "Correlation"
+  )+
+  theme(legend.position = "bottom")
+```
+
+```{r}
+p2 <- bmi$getScatterplot(bmi$evalSummary, c("ARI", "NMI")) +
+  scale_color_manual(values = my_colors)
+```
+
+**Case Study: What is the time and memory trend?**
+
+```{r}
+my_colors <- c("#B9DAD3", "#CBD38A", "#DF7488", "#F9C49C", "#C99158", "#AD848C")
+
+p3<- bmi$getLineplot(bmi$evalSummary, metricVariable = "memory") +
+  scale_color_manual(values = my_colors)+
+  theme(legend.position = "bottom")
+```
+
+```{r}
+bmi$getLineplot(bmi$evalSummary, metricVariable = "time")
+```
+
+
+**Case Study: Which metric is most effective on the method?**
+
+```{r}
+bmi$getForestplot(bmi$evalSummary, "metric", "method")
+```
+
+**Case Study: How does method variability differ across datasets for a specific metric?**
+
+```{r}
+my_colors <- c("#B9DAD3", "#CBD38A", "#DF7488", "#F9C49C", "#C99158", "#AD848C", "#8C8C8C")
+
+p4 <- bmi$getBoxplot(bmi$evalSummary, metricVariable = "ARI", auxDataVariable = "Accuracy") +
+  scale_fill_manual(values = my_colors)+
+  theme(legend.position = "bottom")
+
+bmi$getBoxplot(bmi$evalSummary, metricVariable = "PAS", auxDataVariable = "Continuity")
+```
+
+```{r}
+combined <- ggarrange(p1, p2, p3, p4, nrow = 1, ncol = 4)
+
+ggsave("combinedV0.pdf", combined, width = 13, height = 5, dpi = 300)
+```
+

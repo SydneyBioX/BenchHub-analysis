@@ -1,0 +1,212 @@
+---
+title: "1 Introduction to the Trio Class"
+date: "`r BiocStyle::doc_date()`"
+output: 
+  BiocStyle::html_document:
+    toc_float: true
+    toc_depth: 3
+vignette: >
+  %\VignetteIndexEntry{1 Introduction to the Trio Class}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE
+)
+```
+
+```{r, message=FALSE, warning=FALSE}
+# devtools::load_all()
+library(BenchHub)
+library(clusterProfiler)
+library(DOSE)
+library(DO.db)
+library(EnsDb.Hsapiens.v86)
+
+library(survival)
+library(survminer)
+```
+
+```{r, message=FALSE, warning=FALSE}
+trioA <- Trio$new("figshare:26142922/47361079", cachePath = tempCache)
+
+th <-   theme(text=element_text(size=12 ),
+              axis.text.x = element_text(angle = 45, hjust = 1),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(colour = "black", size=0.2, fill=NA) )
+
+p1 <- ggplot(trioA$data, aes(x = time, y = reorder(...1, time), color = factor(status))) +
+  geom_point() +
+  labs(x = "Time", y = "Subject", color = "Status") +
+  theme(legend.position = "top") +
+  th
+
+trioA$data$group <- ifelse(trioA$data$BRCA1 > median(trioA$data$BRCA1, na.rm = TRUE), 
+                              "High", "Low")
+
+fit <- survfit(Surv(time, status) ~ group, data = trioA$data)
+
+p2 <- ggsurvplot(fit,
+           data = trioA$data,
+           pval = TRUE,
+           risk.table = TRUE,
+           legend.title = "BCL2 Level")
+
+
+
+
+
+ggsave("trioA_surv1.pdf", ggarrange(p2[[1]]), width = 6, height = 8, dpi = 300)
+```
+
+## Adding metrics
+
+```{r}
+harrelCIndexMetric <- function(auxData, predicted) {
+  harrelC1 <- Hmisc::rcorr.cens(-predicted[[2]], auxData[[2]])
+  return(harrelC1["C Index"])
+}
+
+beggCIndexMetric <- function(auxData, predicted) {
+  survAUC::BeggC(
+    auxData[[1]], auxData[[2]], predicted[[1]], predicted[[2]]
+  )
+}
+
+calculate_scores <- function(predicted, auxData) {
+  colnames_data <- colnames(predicted)
+  scores <- sapply(names(auxData), function(pathway) {
+    genes <- intersect(auxData[[pathway]], colnames_data)
+    gene_means <- sapply(genes, function(gene) mean(predicted[[gene]], na.rm = TRUE))
+    sum(gene_means, na.rm = TRUE)
+  })
+  return(scores)
+}
+
+trioA$addMetric(name = "harrelC", metric = harrelCIndexMetric)
+trioA$addMetric(name = "beggC", metric = beggCIndexMetric)
+trioA$addMetric("diseaseScore", calculate_scores)
+
+
+loaded_objects <- load("~/Downloads/DO_pathway.RData")
+surv_obj <- function(data) {
+  sub_data_test <- data[data[,"index"] == "test", ]
+  sub_data_train <- data[data[,"index"] == "train", ]
+  test_surv_obj <- with(sub_data_test, survival::Surv(time, status))
+  train_surv_obj <- with(sub_data_train, survival::Surv(time, status))
+  return(list(train_surv_obj, test_surv_obj))
+}
+trioA$addAuxData(name = "surObj", auxData = surv_obj,  metrics = c("harrelC", "beggC"))
+trioA$addAuxData("DOpathway", DOpathway, c("disease score"))
+```
+
+```{r}
+# external database
+
+loaded_objects <- load("~/Downloads/DO_pathway.RData")
+calculate_scores <- function(predicted, auxData) {
+  colnames_data <- colnames(predicted)
+  scores <- sapply(names(auxData), function(pathway) {
+    genes <- intersect(auxData[[pathway]], colnames_data)
+    gene_means <- sapply(genes, function(gene) mean(predicted[[gene]], na.rm = TRUE))
+    sum(gene_means, na.rm = TRUE)
+  })
+  return(scores)
+}
+
+trioA$addMetric("diseaseScore", calculate_scores)
+trioA$addAuxData("DOpathway", DOpathway, c("disease score"))
+```
+
+In the above example, we added two metrics based on the same function: "equality" and "inequality". The "equality" metric checks if the expected and predicted values are equal, while the "inequality" metric checks if they are not equal.
+
+Underneeth the hood, Trio creates a wrapper function that calls the metric function with the specified arguments.
+
+```{r}
+trio$metrics$inequality
+```
+
+## Adding and getting `auxData`
+
+`auxData` (Auxiliary Data) refers to gold standard in evaluation tasks and falls into two categories:
+
+-   Internal: Extracted directly from the Trio dataset. This may include metadata such as cell types (e.g., B cells, CD4, CD8), patient conditions (e.g., healthy, disease), and spatial domain information. The specific content depends on the dataset itself.
+-   External: Retrieved from external databases, such as disease pathway databases or gene marker databases.
+
+With the `equality` and `inequality` metrics added above, we can now run an evaluation.
+
+First we add some auxiliary data to the Trio object to evaluate against.
+
+Auxiliary data is any data that allows you to make an evaluation. Auxiliary data is added linked to metrics that allow you to evaluate it.
+
+```{r}
+# It can be a fixed quantity
+trio$addAuxData(
+  name = "Number One", auxData = 1, metrics = c("equality", "inequality")
+)
+
+# Or it can be a function that acts on the data
+trio$addAuxData(
+  name = "length", auxData = length, metrics = c("equality", "inequality")
+)
+```
+
+To view the auxiliary data one can use `getAuxData`.
+
+```{r}
+trio$getAuxData("length") # This is equivalent to `length(trio$data)`
+```
+
+## Evaluation Example
+
+Once Trio is set up with relevant metrics and auxData, we are ready to evaluate.
+
+For simple evaluation:
+
+```{r}
+result <- trio$evaluate(list("Number One" = 1, length = 182))
+knitr::kable(result)
+```
+
+For multi-method evaluation:
+
+```{r}
+result <- trio$evaluate(list(
+  great_method = list("Number One" = 1, length = 575),
+  poor_method = list("Number One" = 2, length = 182)
+))
+knitr::kable(result)
+```
+
+For a more detailed look at evaluation using Trio, please refer to vignette 2.
+
+# Other Features
+
+## Caching
+
+Trio uses caching to avoid lengthy downloads after the first time a data set is accessed. The `cachePath` parameter specifies the path to the cache directory. If not specified, the cache directory defaults to `~/.cache/R/TrioR/`.
+
+## Data Splitting
+
+Trio supports data splitting for cross-validation. The `split` method splits the data into training and test sets for cross-validation. The `splitIndices` attribute stores the indices for each sample.
+
+Indices are generated using the `splitTools` package. The `split` method takes in the outcome variable and the number of folds and repeats. The `stratify` parameter can be used to stratify the outcome variable.
+
+```{r}
+trio$split(y = 1:137, n_fold = 2, n_repeat = 5, seed = 1234, stratify = FALSE)
+trio$splitIndices
+```
+
+# Conclusion
+
+In this vignette, we introduced the Trio class and demonstrated how to create a Trio object using curated datasets, source and ID, or loading an object directly. We also showed how to add metrics and auxiliary data to a Trio object and evaluate the performance of different methods using these metrics and auxiliary data. We hope this vignette helps you get started with Trio and conduct benchmarking studies more effectively.
+
+# Session Info
+
+```{r}
+sessionInfo()
+```
